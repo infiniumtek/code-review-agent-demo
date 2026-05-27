@@ -19,12 +19,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout code-review-agent source
+        uses: actions/checkout@v4
+        with:
+          repository: infiniumtek/code-review-agent
+          ref: main
+          path: .code-review-agent-source
+          persist-credentials: false
+
+      - name: Build code-review-agent worker
+        run: docker build -t code-review-agent-local:latest .code-review-agent-source
+
       - name: Run code-review-agent
         uses: infiniumtek/code-review-agent/examples/github-action@main
         with:
           # Replace this with the worker image you build and publish from
           # infiniumtek/code-review-agent.
-          image: ghcr.io/infiniumtek/code-review-agent:latest
+          image: code-review-agent-local:latest
           provider: openai
           model: gpt-5
           llm-api-key: ${{ secrets.OPENAI_API_KEY }}

@@ -22,19 +22,44 @@ import {
 import { useMemo, useState } from "react";
 
 type ProviderKey = "openai" | "anthropic" | "google";
+type ReporterKey = "github" | "auto" | "github,terminal";
+
+type ProviderConfig = {
+  label: string;
+  secret: string;
+  model: string;
+};
+
+type ReporterConfig = {
+  label: string;
+  helper: string;
+  commentMode: string;
+};
+
+type WorkflowConfig = {
+  provider: ProviderKey;
+  providerLabel: string;
+  model: string;
+  secret: string;
+  reporter: ReporterKey;
+  reporterLabel: string;
+  reporterHint: string;
+  reporterMode: string;
+};
+
+type ChecklistItem = {
+  label: string;
+  detail: string;
+};
 
 const providers: Record<
   ProviderKey,
-  {
-    label: string;
-    secret: string;
-    model: string;
-  }
+  ProviderConfig
 > = {
   openai: {
     label: "OpenAI",
     secret: "OPENAI_API_KEY",
-    model: "gpt-5-mini"
+    model: "gpt-5"
   },
   anthropic: {
     label: "Anthropic",
@@ -47,6 +72,28 @@ const providers: Record<
     model: "gemini-2.5-pro"
   }
 };
+
+const providerOrder: ProviderKey[] = ["openai", "anthropic", "google"];
+
+const reporterOptions: Record<ReporterKey, ReporterConfig> = {
+  github: {
+    label: "GitHub PR",
+    helper: "posts or updates the idempotent pull request comment only",
+    commentMode: "PR comment only"
+  },
+  auto: {
+    label: "Auto",
+    helper: "uses the detected CI platform reporter and terminal output",
+    commentMode: "platform default"
+  },
+  "github,terminal": {
+    label: "PR + Logs",
+    helper: "keeps the pull request comment and mirrors the review in job logs",
+    commentMode: "PR comment and job logs"
+  }
+};
+
+const reporterOrder: ReporterKey[] = ["github", "auto", "github,terminal"];
 
 const highlights = [
   {
@@ -94,13 +141,46 @@ const workflowSteps = [
   }
 ];
 
-const setupSteps = [
-  "Fork or clone infiniumtek/code-review-agent.",
-  "Build and publish the worker image to GHCR or another registry.",
-  "Add an LLM API key as a GitHub Actions repository secret.",
-  "Add review.toml at the root of the repository being reviewed.",
-  "Add the pull_request workflow and give it pull-requests: write permission.",
-  "Open or update a PR with TypeScript, JavaScript, or workflow changes."
+const setupSteps: ChecklistItem[] = [
+  {
+    label: "Publish image",
+    detail: "Build the worker image from infiniumtek/code-review-agent and publish it to GHCR or another registry."
+  },
+  {
+    label: "Add secret",
+    detail: "Create the selected provider API key as a GitHub Actions repository secret."
+  },
+  {
+    label: "Keep config trusted",
+    detail: "Add review.toml at the root so CI reads the base-ref copy instead of PR-controlled changes."
+  },
+  {
+    label: "Grant PR access",
+    detail: "Give the workflow contents: read and pull-requests: write permissions."
+  },
+  {
+    label: "Open a PR",
+    detail: "Push TypeScript, JavaScript, workflow, or Dockerfile changes to trigger a review."
+  }
+];
+
+const readinessChecks: ChecklistItem[] = [
+  {
+    label: "Token can comment",
+    detail: "pull-requests: write is available to the workflow token."
+  },
+  {
+    label: "Secret matches provider",
+    detail: "The generated secret name must exist before the action can call the selected model."
+  },
+  {
+    label: "Base SHA is present",
+    detail: "fetch-depth: 0 keeps the trusted PR base commit available for the review range."
+  },
+  {
+    label: "Reporter is explicit",
+    detail: "Use github when the PR comment is the only desired review destination."
+  }
 ];
 
 const findings = [
@@ -127,8 +207,24 @@ const findings = [
   }
 ];
 
-function buildWorkflowSnippet(provider: ProviderKey) {
-  const secretExpression = "${{ secrets." + providers[provider].secret + " }}";
+function buildWorkflowConfig(provider: ProviderKey, reporter: ReporterKey): WorkflowConfig {
+  const providerConfig = providers[provider];
+  const reporterConfig = reporterOptions[reporter];
+
+  return {
+    provider,
+    providerLabel: providerConfig.label,
+    model: providerConfig.model,
+    secret: providerConfig.secret,
+    reporter,
+    reporterLabel: reporterConfig.label,
+    reporterHint: reporterConfig.helper,
+    reporterMode: reporterConfig.commentMode
+  };
+}
+
+function buildWorkflowSnippet(config: WorkflowConfig) {
+  const secretExpression = "${{ secrets." + config.secret + " }}";
 
   return `name: Code Review Agent
 
@@ -153,19 +249,70 @@ jobs:
       - uses: infiniumtek/code-review-agent/examples/github-action@main
         with:
           image: ghcr.io/YOUR_GITHUB_ORG/code-review-agent:latest
-          provider: ${provider}
+          provider: ${config.provider}
+          model: ${config.model}
           llm-api-key: ${secretExpression}
-          reporter: auto
+          reporter: ${config.reporter}
           fail-on: high`;
+}
+
+function buildConfigurationSummary(config: WorkflowConfig): ChecklistItem[] {
+  return [
+    {
+      label: "Provider",
+      detail: `${config.providerLabel} using ${config.secret}.`
+    },
+    {
+      label: "Model",
+      detail: `${config.model} is passed through the action's model input.`
+    },
+    {
+      label: "Reporter",
+      detail: `${config.reporterLabel} ${config.reporterHint}; output mode is ${config.reporterMode}.`
+    }
+  ];
+}
+
+function buildSetupChecklist(config: WorkflowConfig): ChecklistItem[] {
+  return [
+    ...setupSteps,
+    ...readinessChecks.map((check) => {
+      if (check.label === "Secret matches provider") {
+        return {
+          ...check,
+          detail: `${config.secret} must exist before the action can call ${config.model}.`
+        };
+      }
+
+      if (check.label === "Reporter is explicit") {
+        return {
+          ...check,
+          detail: `The generated workflow uses reporter: ${config.reporter}, which ${config.reporterHint}.`
+        };
+      }
+
+      return check;
+    })
+  ];
 }
 
 export function AgentShowcase() {
   const [provider, setProvider] = useState<ProviderKey>("openai");
+  const [reporter, setReporter] = useState<ReporterKey>("github");
   const [copied, setCopied] = useState(false);
-  const workflowSnippet = useMemo(() => buildWorkflowSnippet(provider), [provider]);
+  const workflowPreview = useMemo(() => {
+    const config = buildWorkflowConfig(provider, reporter);
+
+    return {
+      config,
+      snippet: buildWorkflowSnippet(config),
+      summary: buildConfigurationSummary(config),
+      checklist: buildSetupChecklist(config)
+    };
+  }, [provider, reporter]);
 
   async function copyWorkflow() {
-    await navigator.clipboard.writeText(workflowSnippet);
+    await navigator.clipboard.writeText(workflowPreview.snippet);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   }
@@ -275,12 +422,13 @@ export function AgentShowcase() {
           <h2>Choose a provider and copy the workflow shape.</h2>
           <p>
             The included workflow file uses OpenAI by default. Switch providers
-            here to see the secret name and workflow input change.
+            and reporters here to see the model, secret name, and PR comment
+            strategy change.
           </p>
         </div>
 
         <div className="providerRow" role="tablist" aria-label="LLM provider">
-          {(Object.keys(providers) as ProviderKey[]).map((key) => (
+          {providerOrder.map((key) => (
             <button
               className={provider === key ? "providerButton active" : "providerButton"}
               key={key}
@@ -295,13 +443,44 @@ export function AgentShowcase() {
           ))}
         </div>
 
+        <div className="providerRow" role="radiogroup" aria-label="Reporter">
+          {reporterOrder.map((key) => (
+            <button
+              className={reporter === key ? "providerButton active" : "providerButton"}
+              key={key}
+              onClick={() => setReporter(key)}
+              type="button"
+              role="radio"
+              aria-checked={reporter === key}
+              title={reporterOptions[key].helper}
+            >
+              <MessageSquareText size={17} aria-hidden="true" />
+              {reporterOptions[key].label}
+            </button>
+          ))}
+        </div>
+
+        <div className="stepsList" aria-label="Selected workflow configuration">
+          {workflowPreview.summary.map((item, index) => (
+            <div className="setupStep" key={item.label}>
+              <CheckCircle2 size={20} aria-hidden="true" />
+              <span>{index + 1}</span>
+              <p>
+                <strong>{item.label}:</strong> {item.detail}
+              </p>
+            </div>
+          ))}
+        </div>
+
         <div className="setupGrid">
           <div className="stepsList">
-            {setupSteps.map((step, index) => (
-              <div className="setupStep" key={step}>
+            {workflowPreview.checklist.map((step, index) => (
+              <div className="setupStep" key={step.label}>
                 <CheckCircle2 size={20} aria-hidden="true" />
                 <span>{index + 1}</span>
-                <p>{step}</p>
+                <p>
+                  <strong>{step.label}:</strong> {step.detail}
+                </p>
               </div>
             ))}
           </div>
@@ -324,7 +503,7 @@ export function AgentShowcase() {
               </button>
             </div>
             <pre>
-              <code>{workflowSnippet}</code>
+              <code>{workflowPreview.snippet}</code>
             </pre>
           </div>
         </div>
@@ -341,7 +520,7 @@ export function AgentShowcase() {
           </div>
           <div className="summaryLine">
             <GitBranch size={18} aria-hidden="true" />
-            <span>BASE...HEAD reviewed with {providers[provider].model}</span>
+            <span>BASE...HEAD reviewed with {workflowPreview.config.model}</span>
           </div>
           {findings.map((finding) => (
             <article className={`finding ${finding.color}`} key={finding.title}>
@@ -360,8 +539,9 @@ export function AgentShowcase() {
           <h2>The agent posts once, then updates in place.</h2>
           <p>
             The GitHub reporter searches for its hidden marker and replaces that
-            comment on re-runs. Keep <code>reporter: auto</code> on GitHub
-            Actions, or set <code>reporter: github,terminal</code> explicitly.
+            comment on re-runs. Set <code>reporter: github</code> for the PR
+            comment only, or use <code>reporter: github,terminal</code> when job
+            logs should include the same review.
           </p>
           <div className="notice">
             <AlertTriangle size={20} aria-hidden="true" />
