@@ -1,0 +1,23 @@
+# File-level configuration for code-review-agent.
+# In CI this file is read from the trusted PR base ref, not from the PR head.
+
+[skills]
+enable = ["dockerfile", "github-actions", "gitlab-ci", "jenkins"]
+extra_paths = []
+
+[review]
+max_unit_tokens = 100000
+ignore = [
+  "**/*.lock",
+  "**/*.min.js",
+  "**/vendor/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/build/**",
+  ".next/**"
+]
+
+[report]
+reporters = ["auto"]
+report_dir = "."
+fail_on = "high"

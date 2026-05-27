@@ -1,0 +1,31 @@
+name: Code Review Agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run code-review-agent
+        uses: infiniumtek/code-review-agent/examples/github-action@main
+        with:
+          # Replace this with the worker image you build and publish from
+          # infiniumtek/code-review-agent.
+          image: ghcr.io/YOUR_GITHUB_ORG/code-review-agent:latest
+          provider: openai
+          llm-api-key: ${{ secrets.OPENAI_API_KEY }}
+          reporter: auto
+          fail-on: high
