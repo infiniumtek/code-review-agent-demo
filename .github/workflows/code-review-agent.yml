@@ -24,8 +24,9 @@ jobs:
         with:
           # Replace this with the worker image you build and publish from
           # infiniumtek/code-review-agent.
-          image: ghcr.io/YOUR_GITHUB_ORG/code-review-agent:latest
+          image: ghcr.io/infiniumtek/code-review-agent:latest
           provider: openai
+          model: gpt-5
           llm-api-key: ${{ secrets.OPENAI_API_KEY }}
-          reporter: auto
+          reporter: github
           fail-on: high

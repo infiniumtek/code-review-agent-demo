@@ -2,7 +2,7 @@
 # In CI this file is read from the trusted PR base ref, not from the PR head.
 
 [skills]
-enable = ["dockerfile", "github-actions", "gitlab-ci", "jenkins"]
+enable = ["dockerfile", "github-actions"]
 extra_paths = []
 
 [review]
